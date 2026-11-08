@@ -731,6 +731,26 @@ local function DoAction(act, right_click, target)
     end
 end
 
+
+-- Keep the action point while its RPC callback runs. OnLeftClick can use
+-- ProjectScreenPos directly, bypassing our GetWorldPosition snapping hook.
+local drop_rpc_action
+local function RestoreDropRPCAction(previous, ok, ...)
+    drop_rpc_action = previous
+    if not ok then
+        error((...), 0)
+    end
+    return ...
+end
+
+local function WrapDropRPCCallback(callback, action)
+    return function(...)
+        local previous = drop_rpc_action
+        drop_rpc_action = action
+        return RestoreDropRPCAction(previous, pcall(callback, ...))
+    end
+end
+
 local oldSendRPCToServer = GLOBAL.SendRPCToServer
 GLOBAL.SendRPCToServer = function(code, action_code, px, pz, target, ...)
     if IsBuildPlanning() then
@@ -742,6 +762,18 @@ GLOBAL.SendRPCToServer = function(code, action_code, px, pz, target, ...)
             --    return oldSendRPCToServer(RPC.LeftClick, ACTIONS.WALKTO.code, px, pz, nil, true, 10, ACTIONS.WALKTO.canforce, ACTIONS.WALKTO.mod_name)
             --end
             return
+        end
+    end
+    if code == RPC.LeftClick and action_code == ACTIONS.DROP.code and drop_rpc_action then
+        local pos = drop_rpc_action:GetActionPoint()
+        if pos then
+            local controller = ThePlayer.components.playercontroller
+            local platform
+            platform, px, pz = controller:GetPlatformRelativePosition(pos.x, pos.z)
+            local args = { ... }
+            local count = select("#", ...)
+            args[5], args[6] = platform, platform ~= nil
+            return oldSendRPCToServer(code, action_code, px, pz, nil, unpack(args, 1, math.max(count, 6)))
         end
     end
     return oldSendRPCToServer(code, action_code, px, pz, target, ...)
@@ -1085,6 +1117,15 @@ AddComponentPostInit('playercontroller', function(PlayerController, inst)
                 local pos = buffaction:GetActionPoint()
                 PlanningAtPos(buffaction.action == ACTIONS.DROP and 'drop' or 'deploy', pos.x, pos.z)
                 return
+            end
+        end
+        if not self.ismastersim and buffaction and buffaction.action == ACTIONS.DROP and buffaction.pos
+            and IsBSPJPlayEnable() and GLOBAL.IsBSPJPlayHelperReady() and not IsBuildPlanning() then
+            if buffaction.preview_cb then
+                buffaction.preview_cb = WrapDropRPCCallback(buffaction.preview_cb, buffaction)
+            end
+            if buffaction.non_preview_cb then
+                buffaction.non_preview_cb = WrapDropRPCCallback(buffaction.non_preview_cb, buffaction)
             end
         end
         return oldDoAction(self, buffaction, ...)
