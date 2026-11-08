@@ -731,23 +731,15 @@ local function DoAction(act, right_click, target)
     end
 end
 
-
--- Keep the action point while its RPC callback runs. OnLeftClick can use
--- ProjectScreenPos directly, bypassing our GetWorldPosition snapping hook.
+-- 左键丢弃的 RPC 坐标可能绕过 GetWorldPosition 的吸附逻辑
+-- 在回调执行期间保留对应动作，用它的投影坐标修正 RPC
 local drop_rpc_action
-local function RestoreDropRPCAction(previous, ok, ...)
-    drop_rpc_action = previous
-    if not ok then
-        error((...), 0)
-    end
-    return ...
-end
-
 local function WrapDropRPCCallback(callback, action)
     return function(...)
         local previous = drop_rpc_action
         drop_rpc_action = action
-        return RestoreDropRPCAction(previous, pcall(callback, ...))
+        callback(...)
+        drop_rpc_action = previous
     end
 end
 
@@ -1121,10 +1113,10 @@ AddComponentPostInit('playercontroller', function(PlayerController, inst)
         end
         if not self.ismastersim and buffaction and buffaction.action == ACTIONS.DROP and buffaction.pos
             and IsBSPJPlayEnable() and GLOBAL.IsBSPJPlayHelperReady() and not IsBuildPlanning() then
-            if buffaction.preview_cb then
+            if buffaction.preview_cb then -- 开启延迟补偿
                 buffaction.preview_cb = WrapDropRPCCallback(buffaction.preview_cb, buffaction)
             end
-            if buffaction.non_preview_cb then
+            if buffaction.non_preview_cb then -- 关闭延迟补偿
                 buffaction.non_preview_cb = WrapDropRPCCallback(buffaction.non_preview_cb, buffaction)
             end
         end
